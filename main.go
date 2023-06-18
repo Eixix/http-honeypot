@@ -1,73 +1,49 @@
 package main
 
 import (
-	"encoding/json"
+	"crypto/sha256"
+	"crypto/subtle"
 	"fmt"
-	"log"
 	"net/http"
-	"net/url"
 	"os"
-	"time"
+	"strconv"
 )
 
-var (
-	logger *log.Logger
-)
-
-type Record struct {
-	RemoteAddr   string      `json:"remoteaddr"`
-	Method       string      `json:"method"`
-	RequestURI   string      `json:"requesturi"`
-	Headers      http.Header `json:"headers"`
-	UserAgent    string      `json:"UserAgent"`
-	PostForm     url.Values  `json:"postform"`
-	EventTime    uint64      `json:"eventtime"`
-	HoneypotName string      `json:"honeypotname"`
-}
-
-func GenerateRecord(r *http.Request) Record {
-	data := Record{}
-	data.RemoteAddr = r.RemoteAddr
-	data.Method = r.Method
-	data.RequestURI = r.RequestURI
-	data.Headers = r.Header
-	data.UserAgent = r.UserAgent()
-	r.ParseForm()
-	data.PostForm = r.PostForm
-	data.EventTime = uint64(time.Now().Unix())
-	data.HoneypotName = "honeypot-us-west1"
-
-	return data
-}
-
-func LogRecord(r Record) error {
-	r_json, err := json.Marshal(r)
-	if err != nil {
-		return err
-	}
-	logger.Println(string(r_json))
-
-	return nil
-}
+var requests int = 0
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
-	record := GenerateRecord(r)
-	if err := LogRecord(record); err != nil {
-		log.Fatal(err)
-	}
-
+	requests++
+	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, "hello </br>")
 }
 
-func main() {
-	// setup logging
-	if logfile, err := os.OpenFile("honeypot.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666); err == nil {
-		logger = log.New(logfile, "", 0)
-	} else {
-		log.Fatal(err)
-	}
+func handleMetricsAuth(w http.ResponseWriter, r *http.Request) {
+	username, password, ok := r.BasicAuth()
+	if ok {
+		usernameHash := sha256.Sum256([]byte(username))
+		passwordHash := sha256.Sum256([]byte(password))
+		expectedUsernameHash := sha256.Sum256([]byte(os.Getenv("AUTH_USERNAME")))
+		expectedPasswordHash := sha256.Sum256([]byte(os.Getenv("AUTH_USERNAME")))
 
+		usernameMatch := subtle.ConstantTimeCompare(usernameHash[:], expectedUsernameHash[:]) == 1
+		passwordMatch := subtle.ConstantTimeCompare(passwordHash[:], expectedPasswordHash[:]) == 1
+
+		if usernameMatch && passwordMatch {
+			displayMetrics(w, r)
+		} else {
+			handleIndex(w, r)
+		}
+	}
+}
+
+func displayMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, "http_requests_total " + strconv.Itoa(requests))
+}
+
+func main() {
 	fmt.Printf("Starting Server\n")
 	http.HandleFunc("/", handleIndex)
+	http.HandleFunc("/metrics", handleMetricsAuth)
 	http.ListenAndServe(":8080", nil)
 }
