@@ -20,7 +20,6 @@ var (
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	go func() { requests.Inc() }()
-	fmt.Printf(requests)
 	w.Header().Set("Content-Type", "text/html")
 	fmt.Fprintf(w, "hello </br>")
 }
